@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>录屏大师 - 智能剪辑与3D动效工作台</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      height: 54px;
+      background: #0f172a;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 16px;
+    }
+    .tag {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 99px;
+      background: rgba(99, 102, 241, 0.15);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.35);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 320px 1fr 330px;
+      overflow: hidden;
+    }
+    .panel {
+      background: #0f172a;
+      border-right: 1px solid #1e293b;
+      padding: 14px;
+      overflow-y: auto;
+    }
+    .panel-right {
+      background: #0f172a;
+      border-left: 1px solid #1e293b;
+      padding: 14px;
+      overflow-y: auto;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+    .btn {
+      background: #334155;
+      color: #f8fafc;
+      border: 1px solid #475569;
+      padding: 7px 11px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #475569; }
+    .btn.active {
+      background: #6366f1;
+      border-color: #818cf8;
+      color: #fff;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      color: #fff;
+    }
+    .btn-success {
+      background: linear-gradient(135deg, #10b981, #059669);
+      border: none;
+      color: #fff;
+      font-weight: 700;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .stage-wrap {
+      display: flex;
+      flex-direction: column;
+      background: #090d16;
+      overflow: hidden;
+    }
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      position: relative;
+    }
+    canvas {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);
+      cursor: crosshair;
+    }
+    .timeline-bar {
+      height: 250px;
+      background: #0f172a;
+      border-top: 1px solid #1e293b;
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .track-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .track-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .track {
+      height: 34px;
+      background: #1e293b;
+      border-radius: 6px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      padding: 0;
+      font-size: 11px;
+      color: #94a3b8;
+      overflow: hidden;
+      border: 1px solid #334155;
+    }
+    .zoom-block {
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      background: rgba(99, 102, 241, 0.55);
+      border: 1px solid #818cf8;
+      border-radius: 5px;
+      color: #fff;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      cursor: grab;
+      user-select: none;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .zoom-block:active {
+      cursor: grabbing;
+    }
+    .zoom-block.selected {
+      background: rgba(245, 158, 11, 0.8);
+      border-color: #fbbf24;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+    }
+    .zoom-block .resize-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 7px;
+      cursor: ew-resize;
+      background: rgba(255, 255, 255, 0.25);
+    }
+    .zoom-block .resize-handle.left { left: 0; border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+    .zoom-block .resize-handle.right { right: 0; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+    .clip-block {
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      background: rgba(16, 185, 129, 0.4);
+      border: 1px solid #34d399;
+      border-radius: 5px;
+      color: #e2e8f0;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .clip-block.selected {
+      background: rgba(16, 185, 129, 0.7);
+      border-color: #a7f3d0;
+      box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    input[type="range"] { width: 130px; }
+    .bg-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .bg-item {
+      height: 38px;
+      border-radius: 8px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15);
+    }
+    .bg-item.active { border-color: #6366f1; transform: scale(1.05); box-shadow: 0 0 8px rgba(99, 102, 241, 0.6); }
+    .list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f172a;
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .step-box {
+      background: #0f172a;
+      border-left: 3px solid #6366f1;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cbd5e1;
+      margin-top: 8px;
+    }
+    .toast {
+      position: fixed;
+      top: 65px;
+      right: 25px;
+      background: #10b981;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 99999;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast">✅ 工程已保存！</div>
+
+  <header>
+    <div class="brand">
+      <span>🎬 录屏大师</span>
+      <span class="tag">智能剪辑与3D动效</span>
+    </div>
+
+    <!-- 顶部核心操作：保存工程与直接导出下载 -->
+    <div class="header-actions">
+      <div style="font-size:12px;color:#94a3b8;margin-right:8px;" id="regionBadge">录制区域：全画幅</div>
+      <button id="saveProjectBtn" class="btn">💾 保存工程</button>
+      <button id="exportWebmBtn" class="btn btn-success">⬇️ 导出 WebM 下载</button>
+      <button id="exportMp4Btn" class="btn btn-primary">🎬 导出合成视频 (带动效)</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- 左侧面板：录屏背景保留设置 + 自动缩放与3D动效调节 + 标注与特效 -->
+    <div class="panel">
+      <!-- 录屏背景设置（100%还原第一版经典macOS渐变效果） -->
+      <div class="section-title"><span>1. macOS 风渐变背景与窗口</span></div>
+      <div class="card">
+        <div class="row">
+          <span>录屏圆角弧度</span>
+          <input type="range" id="winRadiusRange" min="0" max="32" value="18" />
+        </div>
+        <div class="row">
+          <span>窗口边缘内衬 Padding</span>
+          <input type="range" id="winPaddingRange" min="15" max="80" value="44" />
+        </div>
+        <div class="row">
+          <span>macOS 渐变壁纸</span>
+        </div>
+        <div class="bg-grid">
+          <!-- 第一版经典壁纸方案：Sonoma 炫彩渐变、Ventura 晚霞橙红、Monterey 湖光极光、暗黑深空 -->
+          <div class="bg-item active" data-bg="gradient-sonoma" title="Sonoma 紫粉渐变" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 40%, #db2777 100%);"></div>
+          <div class="bg-item" data-bg="gradient-ventura" title="Ventura 晚霞暖阳" style="background: linear-gradient(135deg, #ea580c 0%, #f43f5e 50%, #e11d48 100%);"></div>
+          <div class="bg-item" data-bg="gradient-monterey" title="Monterey 极光深海" style="background: linear-gradient(135deg, #0284c7 0%, #0d9488 50%, #1e1b4b 100%);"></div>
+          <div class="bg-item" data-bg="dark-slate" title="macOS 暗黑极简" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #334155 100%);"></div>
+        </div>
+      </div>
+
+      <!-- 自动缩放动效（可调时长、位置、倍数、删除或增加） -->
+      <div class="section-title">
+        <span>2. 自动缩放与 3D 空间动效</span>
+        <button id="addZoomBtn" class="btn btn-primary" style="padding:4px 8px;font-size:11px;">+ 新增缩放</button>
+      </div>
+      <div class="card">
+        <div class="row">
+          <span>开启 3D 透视倾斜动效</span>
+          <input type="checkbox" id="enable3DToggle" checked />
+        </div>
+        <div class="row">
+          <span>3D 旋转翻转强度</span>
+          <input type="range" id="tiltRange" min="0" max="25" value="14" />
+        </div>
+        <div id="zoomEditorBox" style="margin-top:8px;padding-top:8px;border-top:1px solid #334155;">
+          <div style="font-size:11px;color:#818cf8;margin-bottom:6px;font-weight:700;" id="selectedZoomLabel">当前选中：自动缩放 #1</div>
+          <div class="row">
+            <span>开始时间 (<span id="zoomStartVal">1.0</span>s)</span>
+            <input type="range" id="zoomStartRange" min="0" max="10" step="0.1" value="1.0" />
+          </div>
+          <div class="row">
+            <span>持续时间 (<span id="zoomDurVal">2.0</span>s)</span>
+            <input type="range" id="zoomDurRange" min="0.4" max="6.0" step="0.1" value="2.0" />
+          </div>
+          <div class="row">
+            <span>放大倍率 (<span id="zoomScaleVal">1.8</span>x)</span>
+            <input type="range" id="zoomScaleRange" min="1.1" max="3.0" step="0.1" value="1.8" />
+          </div>
+          <button id="deleteZoomBtn" class="btn" style="width:100%;background:#7f1d1d;border-color:#991b1b;margin-top:4px;">🗑 删除当前缩放动效</button>
+        </div>
+      </div>
+
+      <!-- 鼠标样式与特效（单光标保留设置） -->
+      <div class="section-title"><span>3. 鼠标样式与点击特效</span></div>
+      <div class="card">
+        <div class="row">
+          <span>仅保留单鼠标模式</span>
+          <select id="cursorModeSelect" style="background:#0f172a;color:#fff;border:1px solid #334155;padding:4px 8px;border-radius:6px;font-size:12px;">
+            <option value="custom" selected>仅显示插件增强特效鼠标</option>
+            <option value="hide_all">彻底隐藏所有鼠标光标</option>
+          </select>
+        </div>
+        <div class="row">
+          <span>光标外观样式</span>
+          <select id="cursorStyleSelect" style="background:#0f172a;color:#fff;border:1px solid #334155;padding:4px 8px;border-radius:6px;font-size:12px;">
+            <option value="arrow">经典白色箭头 (去原光标)</option>
+            <option value="hand">高亮小手</option>
+            <option value="paw">可爱猫爪</option>
+            <option value="neon">赛博光环</option>
+          </select>
+        </div>
+        <div class="row">
+          <span>点击视觉特效</span>
+          <select id="clickEffectSelect" style="background:#0f172a;color:#fff;border:1px solid #334155;padding:4px 8px;border-radius:6px;font-size:12px;">
+            <option value="ripple">双层扩散波纹</option>
+            <option value="pulse">高能聚光环</option>
+            <option value="spark">星光迸发</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 标注工具（精准坐标对齐） -->
+      <div class="section-title"><span>4. 标注 · 聚光灯 · 马赛克</span></div>
+      <div class="card">
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:8px;">选中工具后，直接在中央视频画面中拖拽绘制（已对齐缩放与窗口偏移）：</div>
+        <div class="tool-grid">
+          <button class="btn tool-btn active" data-tool="none">🖱 移动/缩放查看</button>
+          <button class="btn tool-btn" data-tool="arrow">↗️ 箭头标注</button>
+          <button class="btn tool-btn" data-tool="circle">⭕ 画圈强调</button>
+          <button class="btn tool-btn" data-tool="spotlight">🔦 聚光灯突出</button>
+          <button class="btn tool-btn" data-tool="mosaic">🟦 马赛克遮罩</button>
+          <button class="btn" id="clearShapesBtn">🧹 清空标注</button>
+        </div>
+        <div id="annotationList"></div>
+      </div>
+    </div>
+
+    <!-- 中央画布与多轨时间轴 -->
+    <div class="stage-wrap">
+      <div class="canvas-container">
+        <canvas id="stageCanvas" width="960" height="540"></canvas>
+      </div>
+
+      <!-- 底部完整多轨时间轴 -->
+      <div class="timeline-bar">
+        <!-- 播放控制行与原视频常规剪辑操作 -->
+        <div class="controls-row">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button id="playPauseBtn" class="btn btn-primary" style="padding:5px 12px;">⏸ 暂停</button>
+            <button id="splitClipBtn" class="btn" title="在当前播放头位置将原视频分割为两段">✂️ 分割片段</button>
+            <button id="delClipBtn" class="btn" title="删除当前选中的原视频片段">🗑 删除片段</button>
+            <div style="display:flex;align-items:center;gap:4px;margin-left:6px;">
+              <span style="font-size:11px;color:#94a3b8;">原片倍速:</span>
+              <button class="btn speed-btn" data-speed="0.5" style="padding:3px 6px;font-size:10px;">0.5x</button>
+              <button class="btn speed-btn active" data-speed="1.0" style="padding:3px 6px;font-size:10px;">1.0x</button>
+              <button class="btn speed-btn" data-speed="1.5" style="padding:3px 6px;font-size:10px;">1.5x</button>
+              <button class="btn speed-btn" data-speed="2.0" style="padding:3px 6px;font-size:10px;">2.0x</button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="timeDisplay" style="font-variant-numeric:tabular-nums;font-weight:700;">00:00.0 / 00:10.0</span>
+            <input type="range" id="seekBar" min="0" max="10" step="0.05" value="0" style="width:260px;" />
+          </div>
+        </div>
+
+        <!-- 轨道 1：原视频剪辑轨（支持分割、选择、删除、拼接） -->
+        <div class="track-wrapper">
+          <div class="track-header">
+            <span>🎞 原视频剪辑轨（支持点击片段、拖拽头尾裁剪、分割与变速）</span>
+            <span id="clipInfo" style="color:#34d399;">片段 1/1</span>
+          </div>
+          <div class="track" id="videoTrack"></div>
+        </div>
+
+        <!-- 轨道 2：动效轨（直接拖拽色块移动时间、拖拽边缘调整持续时间） -->
+        <div class="track-wrapper">
+          <div class="track-header">
+            <span>🔍 自动缩放与3D动效轨（★ 可直接按住拖拽移动位置，拖拽两侧边缘调节时长）</span>
+            <span style="color:#818cf8;">支持叠加多段</span>
+          </div>
+          <div class="track" id="zoomTrack"></div>
+        </div>
+
+        <!-- 轨道 3：画面标注与特效轨 -->
+        <div class="track-wrapper">
+          <div class="track-header">
+            <span>✏️ 标注 / 聚光灯 / 马赛克轨（与原片画面完美对齐）</span>
+            <span style="color:#cbd5e1;">实时复合渲染</span>
+          </div>
+          <div class="track">
+            <span style="color:#64748b;font-size:10px;padding-left:8px;">根据原片实际像素坐标精确贴合，缩放运镜时与原画面同步移动</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧面板：双路录制合成（外接摄像头与手机录制导入剪映指引） -->
+    <div class="panel-right">
+      <div class="section-title"><span>5. 双路录制合成（人像画中画）</span></div>
+      <div class="card">
+        <div class="row">
+          <span>显示外接摄像头小窗</span>
+          <input type="checkbox" id="showPipToggle" checked />
+        </div>
+        <div class="row">
+          <span>快速避让核心内容</span>
+          <select id="pipCornerSelect" style="background:#0f172a;color:#fff;border:1px solid #334155;padding:4px 8px;border-radius:6px;font-size:12px;">
+            <option value="br">右下角（默认）</option>
+            <option value="bl">左下角</option>
+            <option value="tr">右上角</option>
+            <option value="tl">左上角</option>
+          </select>
+        </div>
+        <div class="row">
+          <span>人像窗口尺寸</span>
+          <input type="range" id="pipSizeRange" min="100" max="250" value="160" />
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px;line-height:1.45;">
+          💡 在「🖱 移动/缩放查看」模式下，可直接在画面上拖拽人像圆形窗口到任意无遮挡位置。
+        </div>
+      </div>
+
+      <div class="section-title"><span>📱 无外设方案：电脑录屏 + 手机拍摄</span></div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:6px;">
+          导入剪映节奏拼合步骤：
+        </div>
+        <div class="step-box">
+          <b>步骤 1：拍手打板对齐</b><br/>
+          电脑录屏同时手机支架拍摄，录制前拍手一次或清晰喊出“3-2-1”，用波形尖峰作为起始对齐锚点。
+        </div>
+        <div class="step-box">
+          <b>步骤 2：主副轨对齐与智能抠像</b><br/>
+          点击上方「⬇️ 导出 WebM 下载」，将电脑录屏拖入剪映主视频轨，手机视频放入画中画轨，开启「智能抠像」移除背景。
+        </div>
+        <div class="step-box">
+          <b>步骤 3：讲解节奏微调与避让</b><br/>
+          按声音波形对齐讲解节奏，并将人物半身摆放在不影响软件核心操作的右下角或左侧空白区。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="editor.js"></script>
+</body>
+</html>
