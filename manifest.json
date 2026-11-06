@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "录屏大师 - 智能录屏与3D动效剪辑工作台",
+  "version": "3.2.0",
+  "description": "支持当前页、全屏与自定义区域框选录制，内置自动缩放与3D动效拖拽调节、标注画圈跟随、原生鼠标隐藏、第一版macOS多彩渐变背景、原视频常规剪辑与导出。",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "录屏大师"
+  },
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "toggle-recording": {
+      "suggested_key": {
+        "default": "Alt+S"
+      },
+      "description": "开始/停止录制"
+    }
+  }
+}
