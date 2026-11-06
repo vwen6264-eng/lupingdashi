@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>录屏大师</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 350px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .badge {
+      font-size: 10px;
+      background: rgba(99, 102, 241, 0.2);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .mode-btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      border-radius: 10px;
+      padding: 10px 6px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .mode-btn.active {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: #6366f1;
+      color: #fff;
+    }
+    .mode-btn span {
+      display: block;
+      font-size: 18px;
+      margin-bottom: 4px;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .hint {
+      font-size: 11px;
+      color: #94a3b8;
+      line-height: 1.45;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed #334155;
+    }
+    .primary-btn {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      cursor: pointer;
+    }
+    .stop-btn {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      cursor: pointer;
+    }
+    .secondary-btn {
+      width: 100%;
+      margin-top: 8px;
+      background: transparent;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .timer {
+      font-size: 24px;
+      font-weight: 800;
+      color: #f87171;
+      text-align: center;
+      margin: 8px 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">🎬 录屏大师</div>
+    <span class="badge">智能剪辑 · 3D动效</span>
+  </div>
+
+  <div id="setupView">
+    <div class="mode-grid">
+      <div class="mode-btn active" data-mode="tab">
+        <span>🌐</span>当前标签页
+      </div>
+      <div class="mode-btn" data-mode="screen">
+        <span>🖥️</span>全屏/窗口
+      </div>
+      <div class="mode-btn" data-mode="region">
+        <span>✂️</span>自定义区域
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label for="camToggle">📷 开启外接摄像头人像小窗</label>
+        <input type="checkbox" id="camToggle" checked />
+      </div>
+      <div class="hint">
+        💡 <b>无外接摄像头？</b>可取消勾选直接录屏，同时用手机录像，录制后按内置指引导入<b>剪映</b>按波形节奏拼合。
+      </div>
+    </div>
+
+    <button id="startBtn" class="primary-btn">🔴 开始录制</button>
+    <button id="openEditorBtn" class="secondary-btn">✨ 直接进入多轨剪辑与动效工作台</button>
+  </div>
+
+  <div id="recordingView" class="hidden">
+    <div class="card">
+      <div style="text-align:center;color:#94a3b8;font-size:12px;">正在录制中...</div>
+      <div id="timerText" class="timer">00:00</div>
+      <div id="modeInfo" style="text-align:center;color:#cbd5e1;font-size:11px;">模式：当前标签页</div>
+    </div>
+    <button id="stopBtn" class="stop-btn">■ 停止录制并进入编辑器</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
