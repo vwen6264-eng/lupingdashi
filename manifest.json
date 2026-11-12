@@ -28,6 +28,10 @@
     }
   ],
   "commands": {
+    "open-prompter": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "打开提词器"
+    },
     "toggle-recording": {
       "suggested_key": {
         "default": "Alt+S"

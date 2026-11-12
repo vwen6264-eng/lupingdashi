@@ -1,7 +1,4 @@
 (function() {
-  if (window.__screenMasterInjected) return;
-  window.__screenMasterInjected = true;
-
   let lastMove = 0;
   window.addEventListener('mousemove', (e) => {
     const now = Date.now();
@@ -11,35 +8,39 @@
       type: 'MOUSE_EVENT',
       payload: {
         eventType: 'move',
+        recordedAt: now,
         nx: e.clientX / window.innerWidth,
         ny: e.clientY / window.innerHeight,
         clientX: e.clientX,
         clientY: e.clientY
       }
     }).catch(() => {});
-  }, { passive: true });
+  }, { passive: true, capture: true });
 
   window.addEventListener('mousedown', (e) => {
     chrome.runtime.sendMessage({
       type: 'MOUSE_EVENT',
       payload: {
         eventType: 'click',
+        recordedAt: Date.now(),
         nx: e.clientX / window.innerWidth,
         ny: e.clientY / window.innerHeight,
         clientX: e.clientX,
         clientY: e.clientY
       }
     }).catch(() => {});
-  }, { passive: true });
+  }, { passive: true, capture: true });
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === 'SHOW_REGION_SELECTOR') {
-      showRegionOverlay(!!msg.cameraEnabled);
+    if (msg.type === 'PING_CONTENT') {
+      sendResponse({ ok: true });
+    } else if (msg.type === 'SHOW_REGION_SELECTOR') {
+      showRegionOverlay(!!msg.cameraEnabled, !!msg.microphoneEnabled, msg.micVolume, msg.screenVolume);
       sendResponse({ ok: true });
     }
   });
 
-  function showRegionOverlay(cameraEnabled) {
+  function showRegionOverlay(cameraEnabled, microphoneEnabled, micVolume, screenVolume) {
     const existing = document.getElementById('__sm_region_overlay');
     if (existing) existing.remove();
 
@@ -99,6 +100,8 @@
       chrome.runtime.sendMessage({
         type: 'REGION_SELECTED',
         cameraEnabled,
+        microphoneEnabled,
+        micVolume, screenVolume,
         region: {
           nx: x / window.innerWidth,
           ny: y / window.innerHeight,
@@ -107,6 +110,8 @@
           pxWidth: Math.round(w),
           pxHeight: Math.round(h)
         }
+      }, (res) => {
+        if (!res || !res.ok) alert((res && res.error) || '录制启动失败，请重试。');
       });
     };
 

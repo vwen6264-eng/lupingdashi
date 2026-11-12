@@ -1,5 +1,7 @@
 const canvas = document.getElementById('stageCanvas');
 const ctx = canvas.getContext('2d');
+const STAGE_WIDTH = 960;
+const STAGE_HEIGHT = 540;
 
 let totalDuration = 10;
 let currentTime = 0;
@@ -56,12 +58,11 @@ let pipState = {
 };
 
 let screenVideo = document.createElement('video');
-screenVideo.muted = true;
+screenVideo.muted = false;
 screenVideo.loop = true;
 screenVideo.playsInline = true;
 let hasRealScreenVideo = false;
 let screenBlobRef = null;
-
 let camVideo = document.createElement('video');
 camVideo.muted = true;
 camVideo.loop = true;
@@ -69,6 +70,10 @@ camVideo.playsInline = true;
 let hasRealCamVideo = false;
 
 let regionMeta = null;
+let nativeCursor = false;
+let manualCursorClicks = [];
+let markingCursorClick = false;
+let recordingTimestamp = null;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -114,6 +119,12 @@ async function initMedia() {
 
       if (res && res.lastRecordingMeta) {
         const meta = res.lastRecordingMeta;
+        recordingTimestamp = meta.timestamp;
+        if (res.savedProjectState?.recordingTimestamp === recordingTimestamp) {
+          manualCursorClicks = res.savedProjectState.manualCursorClicks || [];
+        }
+        nativeCursor = !!meta.nativeCursor || meta.mode === 'screen';
+        if (nativeCursor) document.getElementById('cursorNote').textContent = '此录制包含原始鼠标，无法替换或隐藏；可手动标记点击位置添加特效。';
         if (meta.duration) {
           totalDuration = Math.max(3, Math.min(300, meta.duration));
           videoClips = [{ id: 'c1', start: 0, end: totalDuration, offset: 0, speed: 1.0 }];
@@ -124,8 +135,11 @@ async function initMedia() {
           document.getElementById('regionBadge').textContent =
             `录制区域：自定义框选 (${meta.region.pxWidth}×${meta.region.pxHeight} px)`;
         }
-        if (meta.mouseEvents && meta.mouseEvents.length > 2) {
+        if (meta.mouseEvents) {
           mouseTrail = meta.mouseEvents;
+          if (!nativeCursor && !mouseTrail.length) {
+            document.getElementById('cursorNote').textContent = '此录制没有鼠标轨迹，可手动标记点击位置添加特效。';
+          }
           const clicks = meta.mouseEvents.filter(e => e.eventType === 'click');
           if (clicks.length > 0) {
             zoomEffects = clicks.slice(0, 6).map((c, idx) => ({
@@ -158,7 +172,10 @@ async function initMedia() {
       }
       document.getElementById('seekBar').max = totalDuration;
       document.getElementById('zoomStartRange').max = totalDuration;
-      screenVideo.play().catch(() => {});
+      screenVideo.play().catch(() => {
+        isPlaying = false;
+        document.getElementById('playPauseBtn').textContent = '▶ 播放';
+      });
       renderTracks();
     };
   }
@@ -179,6 +196,19 @@ const exportWebmBtn = document.getElementById('exportWebmBtn');
 const exportMp4Btn = document.getElementById('exportMp4Btn');
 const toast = document.getElementById('toast');
 
+const fullscreenBtn = document.getElementById('fullscreenBtn');
+fullscreenBtn.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (err) {
+    showToast('无法切换全屏：' + err.message);
+  }
+});
+document.addEventListener('fullscreenchange', () => {
+  fullscreenBtn.textContent = document.fullscreenElement ? '⛶ 退出全屏' : '⛶ 全屏工作台';
+});
+
 function showToast(msg) {
   toast.textContent = msg;
   toast.style.display = 'block';
@@ -190,6 +220,8 @@ saveProjectBtn.addEventListener('click', () => {
     zoomEffects,
     videoClips,
     annotations,
+    manualCursorClicks,
+    recordingTimestamp,
     bgSettings,
     pipState: { show: pipState.show, x: pipState.x, y: pipState.y, size: pipState.size },
     savedAt: Date.now()
@@ -217,13 +249,18 @@ exportWebmBtn.addEventListener('click', () => {
 });
 
 exportMp4Btn.addEventListener('click', () => {
-  exportCanvasStream(Math.min(totalDuration, 8));
+  exportCanvasStream(totalDuration);
 });
 
 function exportCanvasStream(sec) {
   showToast(`🎬 正在离线合成包含 3D 缩放、Sonoma 背景与对齐标注的视频 (${sec}s)...`);
   const stream = canvas.captureStream(30);
-  const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+  if (hasRealScreenVideo) {
+    screenVideo.currentTime = 0;
+    screenVideo.play().catch(() => {});
+    screenVideo.captureStream().getAudioTracks().forEach(track => stream.addTrack(track));
+  }
+  const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 12000000, audioBitsPerSecond: 192000 });
   const chunks = [];
   recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
   recorder.onstop = () => {
@@ -239,7 +276,7 @@ function exportCanvasStream(sec) {
   isPlaying = true;
   setTimeout(() => {
     recorder.stop();
-  }, sec * 1000);
+  }, sec * 1000 / playbackSpeed);
 }
 
 // 录屏背景设置联动
@@ -552,15 +589,15 @@ document.getElementById('clearShapesBtn').addEventListener('click', () => {
 // 坐标转换计算辅助函数：将画布点击坐标反推换算为录屏视窗内部的归一化坐标 (0~1)
 function getScreenWindowCoords(canvasX, canvasY, currentScale, currentFocusX, currentFocusY) {
   const pad = bgSettings.padding;
-  const winW = canvas.width - pad * 2;
-  const winH = canvas.height - pad * 2;
+  const winW = STAGE_WIDTH - pad * 2;
+  const winH = STAGE_HEIGHT - pad * 2;
 
-  const cx = currentFocusX * canvas.width;
-  const cy = currentFocusY * canvas.height;
+  const cx = currentFocusX * STAGE_WIDTH;
+  const cy = currentFocusY * STAGE_HEIGHT;
 
   // 逆矩阵变换
-  const unscaledX = (canvasX - canvas.width / 2) / currentScale + cx;
-  const unscaledY = (canvasY - canvas.height / 2) / currentScale + cy;
+  const unscaledX = (canvasX - STAGE_WIDTH / 2) / currentScale + cx;
+  const unscaledY = (canvasY - STAGE_HEIGHT / 2) / currentScale + cy;
 
   const nx = (unscaledX - pad) / winW;
   const ny = (unscaledY - pad) / winH;
@@ -572,15 +609,41 @@ let drawingShape = null;
 function getCanvasCoords(e) {
   const rect = canvas.getBoundingClientRect();
   return {
-    x: (e.clientX - rect.left) * (canvas.width / rect.width),
-    y: (e.clientY - rect.top) * (canvas.height / rect.height)
+    x: (e.clientX - rect.left) * (STAGE_WIDTH / rect.width),
+    y: (e.clientY - rect.top) * (STAGE_HEIGHT / rect.height)
   };
 }
 
 let latestRenderTransform = { scale: 1.0, focusX: 0.5, focusY: 0.5 };
 
+document.getElementById('markCursorClickBtn').addEventListener('click', () => {
+  isPlaying = false;
+  screenVideo.pause();
+  document.getElementById('cursorModeSelect').value = 'custom';
+  document.getElementById('playPauseBtn').textContent = '▶ 播放';
+  markingCursorClick = true;
+  showToast('请在画面上点击需要添加特效的位置');
+});
+document.getElementById('clearCursorClicksBtn').addEventListener('click', () => {
+  manualCursorClicks = [];
+  markingCursorClick = false;
+  showToast('已清除手动点击标记');
+});
+
 canvas.addEventListener('mousedown', (e) => {
   const pos = getCanvasCoords(e);
+  if (markingCursorClick) {
+    const { scale, focusX, focusY } = latestRenderTransform;
+    const point = getScreenWindowCoords(pos.x, pos.y, scale, focusX, focusY);
+    if (point.nx < 0 || point.nx > 1 || point.ny < 0 || point.ny > 1) {
+      showToast('请点击录制画面内的位置');
+      return;
+    }
+    manualCursorClicks.push({ timeOffset: currentTime, nx: point.nx, ny: point.ny, eventType: 'click' });
+    markingCursorClick = false;
+    showToast('已添加点击特效，点击播放查看');
+    return;
+  }
   if (activeTool === 'none' && pipState.show) {
     const dist = Math.hypot(pos.x - (pipState.x + pipState.size / 2), pos.y - (pipState.y + pipState.size / 2));
     if (dist <= pipState.size / 2) {
@@ -608,8 +671,8 @@ canvas.addEventListener('mousedown', (e) => {
 canvas.addEventListener('mousemove', (e) => {
   const pos = getCanvasCoords(e);
   if (pipState.dragging) {
-    pipState.x = Math.max(12, Math.min(canvas.width - pipState.size - 12, pos.x - pipState.dragOffsetX));
-    pipState.y = Math.max(12, Math.min(canvas.height - pipState.size - 12, pos.y - pipState.dragOffsetY));
+    pipState.x = Math.max(12, Math.min(STAGE_WIDTH - pipState.size - 12, pos.x - pipState.dragOffsetX));
+    pipState.y = Math.max(12, Math.min(STAGE_HEIGHT - pipState.size - 12, pos.y - pipState.dragOffsetY));
     return;
   }
   if (drawingShape) {
@@ -637,9 +700,9 @@ document.getElementById('pipSizeRange').addEventListener('input', (e) => {
 document.getElementById('pipCornerSelect').addEventListener('change', (e) => {
   const val = e.target.value;
   const pad = 28;
-  if (val === 'br') { pipState.x = canvas.width - pipState.size - pad; pipState.y = canvas.height - pipState.size - pad; }
-  if (val === 'bl') { pipState.x = pad; pipState.y = canvas.height - pipState.size - pad; }
-  if (val === 'tr') { pipState.x = canvas.width - pipState.size - pad; pipState.y = pad; }
+  if (val === 'br') { pipState.x = STAGE_WIDTH - pipState.size - pad; pipState.y = STAGE_HEIGHT - pipState.size - pad; }
+  if (val === 'bl') { pipState.x = pad; pipState.y = STAGE_HEIGHT - pipState.size - pad; }
+  if (val === 'tr') { pipState.x = STAGE_WIDTH - pipState.size - pad; pipState.y = pad; }
   if (val === 'tl') { pipState.x = pad; pipState.y = pad; }
 });
 
@@ -707,7 +770,8 @@ function renderLoop(now) {
   lastTick = now;
 
   if (isPlaying) {
-    currentTime += dt;
+    if (hasRealScreenVideo && !screenVideo.paused) currentTime = screenVideo.currentTime;
+    else if (!hasRealScreenVideo) currentTime += dt;
     if (currentTime > totalDuration) {
       currentTime = 0;
       if (hasRealScreenVideo) screenVideo.currentTime = 0;
@@ -715,6 +779,7 @@ function renderLoop(now) {
     seekBar.value = currentTime;
   }
   timeDisplay.textContent = `${currentTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`;
+  ctx.setTransform(2, 0, 0, 2, 0, 0);
 
   // 计算当前激活的缩放动效
   const activeZoom = zoomEffects.find(z => currentTime >= z.start && currentTime <= z.start + z.duration);
@@ -749,7 +814,7 @@ function renderLoop(now) {
   }
 
   // 核心功能点3修复：100%还原第一版色彩鲜明的 macOS 渐变壁纸
-  const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  const grad = ctx.createLinearGradient(0, 0, STAGE_WIDTH, STAGE_HEIGHT);
   if (bgSettings.theme === 'gradient-sonoma') {
     grad.addColorStop(0, '#4f46e5');
     grad.addColorStop(0.4, '#7c3aed');
@@ -768,18 +833,18 @@ function renderLoop(now) {
     grad.addColorStop(1, '#334155');
   }
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, STAGE_WIDTH, STAGE_HEIGHT);
 
   ctx.save();
-  const cx = focusX * canvas.width;
-  const cy = focusY * canvas.height;
-  ctx.translate(canvas.width / 2, canvas.height / 2);
+  const cx = focusX * STAGE_WIDTH;
+  const cy = focusY * STAGE_HEIGHT;
+  ctx.translate(STAGE_WIDTH / 2, STAGE_HEIGHT / 2);
   ctx.scale(scale, scale);
   ctx.translate(-cx, -cy);
 
   const pad = bgSettings.padding;
-  const winW = canvas.width - pad * 2;
-  const winH = canvas.height - pad * 2;
+  const winW = STAGE_WIDTH - pad * 2;
+  const winH = STAGE_HEIGHT - pad * 2;
   const rad = bgSettings.radius;
 
   // 录屏窗口阴影与圆角底框
@@ -813,22 +878,11 @@ function renderLoop(now) {
       }
       ctx.restore();
     } else {
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(pad + 20, pad + 40, 220, winH - 60);
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(pad + 260, pad + 40, winW - 280, 140);
-      ctx.fillStyle = '#6366f1';
-      ctx.fillRect(pad + 280, pad + 64, 200, 36);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.fillText('录屏大师 · 3D缩放与常规剪辑', pad + 292, pad + 88);
-
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(pad + 260, pad + 200, winW - 280, 190);
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '13px monospace';
-      ctx.fillText('机密数据区: 0x8821-4921 (可用马赛克工具进行遮挡)', pad + 280, pad + 245);
-      ctx.fillText('核心指标数据: 增长 +240% (可用画圈与箭头标注)', pad + 280, pad + 285);
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(screenBlobRef ? '正在加载录制画面…' : '未找到录制视频，请先完成一次录屏', STAGE_WIDTH / 2, STAGE_HEIGHT / 2);
+      ctx.textAlign = 'start';
     }
   } else {
     ctx.fillStyle = '#020617';
@@ -838,7 +892,7 @@ function renderLoop(now) {
     ctx.fillStyle = '#64748b';
     ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('（该片段已被剪除）', canvas.width / 2, canvas.height / 2);
+    ctx.fillText('（该片段已被剪除）', STAGE_WIDTH / 2, STAGE_HEIGHT / 2);
     ctx.textAlign = 'start';
   }
 
@@ -889,20 +943,27 @@ function renderLoop(now) {
   // 鼠标与点击特效（核心功能点1修复：单鼠标控制）
   const cursorMode = document.getElementById('cursorModeSelect').value;
 
-  if (cursorMode !== 'hide_all') {
-    const curEvt = mouseTrail.reduce((prev, curr) =>
+  const manualAtTime = manualCursorClicks.filter(e => currentTime >= e.timeOffset && currentTime - e.timeOffset < 0.7);
+  const cursorEvents = nativeCursor ? [] : mouseTrail;
+  if (cursorMode !== 'hide_all' && (cursorEvents.length || manualAtTime.length)) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(pad, pad, winW, winH, rad);
+    ctx.clip();
+    const curEvt = manualAtTime.length ? manualAtTime[manualAtTime.length - 1] : cursorEvents.reduce((prev, curr) =>
       Math.abs(curr.timeOffset - currentTime) < Math.abs(prev.timeOffset - currentTime) ? curr : prev
-    , mouseTrail[0]);
+    , cursorEvents[0]);
 
     if (curEvt) {
-      const mx = pad + curEvt.nx * winW;
-      const my = pad + curEvt.ny * winH;
+      const manualCursor = manualAtTime.length > 0;
+      const mx = pad + (regionMeta && !manualCursor ? (curEvt.nx - regionMeta.nx) / regionMeta.nw : curEvt.nx) * winW;
+      const my = pad + (regionMeta && !manualCursor ? (curEvt.ny - regionMeta.ny) / regionMeta.nh : curEvt.ny) * winH;
 
       const clickEffect = document.getElementById('clickEffectSelect').value;
-      mouseTrail.filter(e => e.eventType === 'click' && currentTime >= e.timeOffset && currentTime - e.timeOffset < 0.7).forEach(c => {
+      [...cursorEvents.filter(e => e.eventType === 'click' && currentTime >= e.timeOffset && currentTime - e.timeOffset < 0.7).map(e => ({ ...e, recorded: true })), ...manualAtTime].forEach(c => {
         const p = (currentTime - c.timeOffset) / 0.7;
-        const cxPos = pad + c.nx * winW;
-        const cyPos = pad + c.ny * winH;
+        const cxPos = pad + (regionMeta && c.recorded ? (c.nx - regionMeta.nx) / regionMeta.nw : c.nx) * winW;
+        const cyPos = pad + (regionMeta && c.recorded ? (c.ny - regionMeta.ny) / regionMeta.nh : c.ny) * winH;
         ctx.save();
         if (clickEffect === 'ripple') {
           ctx.strokeStyle = `rgba(99, 102, 241, ${1 - p})`;
@@ -946,8 +1007,15 @@ function renderLoop(now) {
         ctx.fill();
         ctx.stroke();
       } else if (cursorStyle === 'hand') {
-        ctx.font = '24px sans-serif';
-        ctx.fillText('👆', -8, 18);
+        ctx.fillStyle = '#f5f0df';
+        ctx.strokeStyle = '#6b6257';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 14); ctx.lineTo(0, 2); ctx.quadraticCurveTo(0, -2, 3, -2);
+        ctx.quadraticCurveTo(6, -2, 6, 2); ctx.lineTo(6, 10); ctx.lineTo(8, 8);
+        ctx.quadraticCurveTo(11, 6, 13, 9); ctx.lineTo(18, 13); ctx.lineTo(17, 22);
+        ctx.quadraticCurveTo(16, 26, 12, 26); ctx.lineTo(6, 26); ctx.lineTo(-2, 18);
+        ctx.quadraticCurveTo(-4, 15, -2, 14); ctx.closePath(); ctx.fill(); ctx.stroke();
       } else if (cursorStyle === 'paw') {
         ctx.font = '24px sans-serif';
         ctx.fillText('🐾', -10, 14);
@@ -964,6 +1032,7 @@ function renderLoop(now) {
       }
       ctx.restore();
     }
+    ctx.restore();
   }
 
   ctx.restore();
@@ -1012,3 +1081,45 @@ syncZoomControls();
 renderAnnotationList();
 initMedia();
 requestAnimationFrame(renderLoop);
+
+// 每次编辑手势保存一次状态，输入框保留浏览器自身的文字撤销。
+const undoHistory = [];
+function snapshotEdit() {
+  const controls = {};
+  document.querySelectorAll('input, select').forEach(el => {
+    if (el.id && el.id !== 'seekBar') controls[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return JSON.stringify({ videoClips, selectedClipId, zoomEffects, selectedZoomId, annotations,
+    bgSettings, pipState, manualCursorClicks, playbackSpeed, controls });
+}
+document.addEventListener('pointerdown', event => {
+  const target = event.target;
+  if (target.closest('#seekBar, #playPauseBtn, #saveProjectBtn, #exportWebmBtn, #exportMp4Btn, #markCursorClickBtn')) return;
+  if (!target.closest('button, input, select, #stageCanvas, #zoomTrack, .bg-item')) return;
+  const state = snapshotEdit();
+  if (undoHistory[undoHistory.length - 1] !== state) undoHistory.push(state);
+  if (undoHistory.length > 100) undoHistory.shift();
+}, true);
+document.addEventListener('keydown', event => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return;
+  const target = event.target;
+  if (target.isContentEditable || target.tagName === 'TEXTAREA' || (target.tagName === 'INPUT' && ['text', 'number'].includes(target.type))) return;
+  event.preventDefault();
+  if (!undoHistory.length) return;
+  const state = JSON.parse(undoHistory.pop());
+  videoClips = state.videoClips; selectedClipId = state.selectedClipId;
+  zoomEffects = state.zoomEffects; selectedZoomId = state.selectedZoomId;
+  annotations = state.annotations; bgSettings = state.bgSettings;
+  pipState = state.pipState; manualCursorClicks = state.manualCursorClicks;
+  playbackSpeed = state.playbackSpeed;
+  screenVideo.playbackRate = playbackSpeed;
+  for (const [id, value] of Object.entries(state.controls)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+  }
+  document.querySelectorAll('.speed-btn').forEach(btn => btn.classList.toggle('active', Number(btn.dataset.speed) === playbackSpeed));
+  document.querySelectorAll('.bg-item').forEach(el => el.classList.toggle('active', el.dataset.bg === bgSettings.theme));
+  renderTracks(); renderAnnotationList(); syncZoomControls();
+  showToast('已撤销上一步操作');
+});

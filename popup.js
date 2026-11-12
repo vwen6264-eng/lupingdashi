@@ -3,6 +3,14 @@ let timerInterval = null;
 
 const modeBtns = document.querySelectorAll('.mode-btn');
 const camToggle = document.getElementById('camToggle');
+const micToggle = document.getElementById('micToggle');
+for (const id of ['micVolume', 'screenVolume']) {
+  const input = document.getElementById(id);
+  input.addEventListener('input', () => { document.getElementById(id + 'Value').textContent = input.value + '%'; });
+}
+function audioLevels() {
+  return { micVolume: Number(document.getElementById('micVolume').value) / 100, screenVolume: Number(document.getElementById('screenVolume').value) / 100 };
+}
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const openEditorBtn = document.getElementById('openEditorBtn');
@@ -52,11 +60,25 @@ function renderState(state) {
 
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, renderState);
 
-startBtn.addEventListener('click', () => {
+startBtn.addEventListener('click', async () => {
+  if (micToggle.checked) {
+    try {
+      const permission = await navigator.permissions.query({ name: 'microphone' });
+      if (permission.state !== 'granted') {
+        chrome.tabs.create({ url: chrome.runtime.getURL('microphone.html') });
+        return;
+      }
+    } catch (err) {
+      alert('无法检查麦克风权限：' + err.message);
+      return;
+    }
+  }
   if (selectedMode === 'region') {
     chrome.runtime.sendMessage({
       type: 'START_REGION_SELECT',
-      cameraEnabled: camToggle.checked
+      cameraEnabled: camToggle.checked,
+      microphoneEnabled: micToggle.checked,
+      ...audioLevels()
     }, (res) => {
       if (res && res.error) {
         alert(res.error);
@@ -70,20 +92,35 @@ startBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({
     type: 'START_RECORDING',
     mode: selectedMode,
-    cameraEnabled: camToggle.checked
+    cameraEnabled: camToggle.checked,
+    microphoneEnabled: micToggle.checked,
+    ...audioLevels()
   }, (res) => {
     if (res && res.ok) {
       renderState(res.state);
+    } else {
+      alert((res && res.error) || '录制启动失败，请重试。');
     }
   });
 });
 
 stopBtn.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, () => {
-    window.close();
+  stopBtn.disabled = true;
+  stopBtn.textContent = '正在保存录制…';
+  chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, (res) => {
+    if (res?.ok) window.close();
+    else {
+      alert(res?.error || '保存录制失败，请检查浏览器存储空间。');
+      stopBtn.disabled = false;
+      renderState({ isRecording: false });
+    }
   });
 });
 
 openEditorBtn.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('editor.html') });
+});
+
+document.getElementById('openPrompterBtn').addEventListener('click', () => {
+  chrome.windows.create({ url: chrome.runtime.getURL('prompter.html'), type: 'popup', width: 600, height: 500 });
 });

@@ -8,16 +8,22 @@ let recordingState = {
   mouseEvents: []
 };
 
+chrome.commands.onCommand.addListener(command => {
+  if (command === 'open-prompter') {
+    chrome.windows.create({ url: chrome.runtime.getURL('prompter.html'), type: 'popup', width: 600, height: 500 });
+  }
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'GET_STATE') {
     sendResponse(recordingState);
     return true;
   }
 
-  if (msg.type === 'MOUSE_EVENT' && recordingState.isRecording) {
+  if (msg.type === 'MOUSE_EVENT' && recordingState.isRecording && recordingState.mode !== 'screen' && sender.tab?.id === recordingState.tabId) {
     recordingState.mouseEvents.push({
       ...msg.payload,
-      timeOffset: (Date.now() - recordingState.startTime) / 1000
+      timeOffset: Math.max(0, ((msg.payload.recordedAt || Date.now()) - recordingState.startTime) / 1000)
     });
     return true;
   }
@@ -35,14 +41,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       try {
-        await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_REGION_SELECTOR', cameraEnabled: msg.cameraEnabled });
+        await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_REGION_SELECTOR', cameraEnabled: msg.cameraEnabled, microphoneEnabled: msg.microphoneEnabled, micVolume: msg.micVolume, screenVolume: msg.screenVolume });
         sendResponse({ ok: true });
       } catch (err) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           files: ['content.js']
         });
-        await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_REGION_SELECTOR', cameraEnabled: msg.cameraEnabled });
+        await chrome.tabs.sendMessage(tab.id, { type: 'SHOW_REGION_SELECTOR', cameraEnabled: msg.cameraEnabled, microphoneEnabled: msg.microphoneEnabled, micVolume: msg.micVolume, screenVolume: msg.screenVolume });
         sendResponse({ ok: true });
       }
     });
@@ -54,6 +60,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       mode: 'region',
       region: msg.region,
       cameraEnabled: msg.cameraEnabled,
+      microphoneEnabled: msg.microphoneEnabled,
+      micVolume: msg.micVolume, screenVolume: msg.screenVolume,
       tabId: sender.tab ? sender.tab.id : null
     }).then(sendResponse);
     return true;
@@ -63,7 +71,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     startRecordingFlow({
       mode: msg.mode || 'tab',
       region: msg.region || null,
-      cameraEnabled: !!msg.cameraEnabled
+      cameraEnabled: !!msg.cameraEnabled,
+      microphoneEnabled: !!msg.microphoneEnabled,
+      micVolume: msg.micVolume, screenVolume: msg.screenVolume
     }).then(sendResponse);
     return true;
   }
@@ -86,7 +96,7 @@ async function ensureOffscreenDocument() {
   });
 }
 
-async function startRecordingFlow({ mode, region, cameraEnabled, tabId }) {
+async function startRecordingFlow({ mode, region, cameraEnabled, microphoneEnabled, micVolume, screenVolume, tabId }) {
   try {
     await ensureOffscreenDocument();
     let streamId = null;
@@ -101,13 +111,30 @@ async function startRecordingFlow({ mode, region, cameraEnabled, tabId }) {
       try {
         streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId });
       } catch (e) {
-        console.warn('tabCapture fallback to displayMedia:', e);
-        streamId = null;
+        throw new Error('无法录制当前标签页，请切换到普通网页后重试：' + e.message);
       }
     }
 
+    // 扩展重载后，已打开的网页不会自动重新注入内容脚本。
+    if (mode !== 'screen' && streamId && targetTabId) {
+      try {
+        await chrome.tabs.sendMessage(targetTabId, { type: 'PING_CONTENT' });
+      } catch {
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ['content.js'] });
+        } catch (err) {
+          throw new Error('无法在当前页面采集鼠标轨迹，请切换到普通网页并刷新后重试：' + err.message);
+        }
+      }
+    }
+
+    const result = await chrome.runtime.sendMessage({
+      type: 'OFFSCREEN_START', streamId, mode, cameraEnabled, microphoneEnabled, micVolume, screenVolume
+    });
+    if (!result || !result.ok) throw new Error((result && result.error) || '录制启动失败');
+
     // 在页面注入隐藏原生鼠标光标的样式规则（防止录制时把原鼠标也录进画面导致双鼠标）
-    if (targetTabId) {
+    if (targetTabId && mode !== 'screen') {
       chrome.scripting.insertCSS({
         target: { tabId: targetTabId },
         css: '* { cursor: none !important; }'
@@ -116,9 +143,12 @@ async function startRecordingFlow({ mode, region, cameraEnabled, tabId }) {
 
     recordingState = {
       isRecording: true,
-      startTime: Date.now(),
+      startTime: result.startTime,
       mode,
+      tabId: targetTabId,
+      nativeCursor: mode === 'screen',
       cameraEnabled: !!cameraEnabled,
+      microphoneEnabled: !!microphoneEnabled,
       region: region || null,
       chunksCount: 0,
       mouseEvents: []
@@ -126,14 +156,6 @@ async function startRecordingFlow({ mode, region, cameraEnabled, tabId }) {
 
     chrome.action.setBadgeText({ text: 'REC' });
     chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
-
-    chrome.runtime.sendMessage({
-      type: 'OFFSCREEN_START',
-      streamId,
-      mode,
-      region,
-      cameraEnabled
-    });
 
     return { ok: true, state: recordingState };
   } catch (err) {
@@ -147,9 +169,9 @@ async function stopRecordingFlow() {
 
   // 恢复页面正常光标
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0] && tabs[0].id) {
+    if (recordingState.tabId) {
       chrome.scripting.removeCSS({
-        target: { tabId: tabs[0].id },
+        target: { tabId: recordingState.tabId },
         css: '* { cursor: none !important; }'
       }).catch(() => {});
     }
@@ -159,6 +181,7 @@ async function stopRecordingFlow() {
     lastRecordingMeta: {
       duration: Math.max(1, (Date.now() - recordingState.startTime) / 1000),
       mode: recordingState.mode,
+      nativeCursor: recordingState.nativeCursor,
       cameraEnabled: recordingState.cameraEnabled,
       region: recordingState.region,
       mouseEvents: recordingState.mouseEvents,
@@ -166,11 +189,9 @@ async function stopRecordingFlow() {
     }
   });
 
-  chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' });
-
-  setTimeout(() => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('editor.html') });
-  }, 450);
+  const result = await chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' });
+  if (!result || !result.ok) return { ok: false, error: result?.error || '保存录制失败' };
+  await chrome.tabs.create({ url: chrome.runtime.getURL('editor.html') });
 
   return { ok: true };
 }

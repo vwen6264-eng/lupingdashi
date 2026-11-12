@@ -148,6 +148,12 @@
 
     <div class="card">
       <div class="row">
+        <label for="micToggle">🎙️ 录制麦克风声音</label>
+        <input type="checkbox" id="micToggle" checked />
+      </div>
+      <div class="row"><label for="micVolume">麦克风音量</label><input type="range" id="micVolume" min="0" max="150" value="100" /> <span id="micVolumeValue">100%</span></div>
+      <div class="row"><label for="screenVolume">画面声音音量</label><input type="range" id="screenVolume" min="0" max="150" value="100" /> <span id="screenVolumeValue">100%</span></div>
+      <div class="row">
         <label for="camToggle">📷 开启外接摄像头人像小窗</label>
         <input type="checkbox" id="camToggle" checked />
       </div>
@@ -169,6 +175,7 @@
     <button id="stopBtn" class="stop-btn">■ 停止录制并进入编辑器</button>
   </div>
 
+  <button id="openPrompterBtn" class="secondary-btn">📝 打开提词器</button>
   <script src="popup.js"></script>
 </body>
 </html>

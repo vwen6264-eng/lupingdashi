@@ -1,6 +1,7 @@
 let mediaRecorder = null;
 let camRecorder = null;
 let activeStreams = [];
+let playbackContext = null;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -26,15 +27,17 @@ async function saveBlob(key, blob) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OFFSCREEN_START') {
-    startCapture(msg);
+    startCapture(msg).then(sendResponse);
+    return true;
   } else if (msg.type === 'OFFSCREEN_STOP') {
-    stopCapture();
+    stopCapture().then(() => sendResponse({ ok: true }), err => sendResponse({ ok: false, error: err.message }));
+    return true;
   }
 });
 
-async function startCapture({ streamId, mode, cameraEnabled }) {
+async function startCapture({ streamId, mode, cameraEnabled, microphoneEnabled, micVolume = 1, screenVolume = 1 }) {
   try {
     let screenStream = null;
     if (streamId && (mode === 'tab' || mode === 'region')) {
@@ -48,33 +51,65 @@ async function startCapture({ streamId, mode, cameraEnabled }) {
         video: {
           mandatory: {
             chromeMediaSource: 'tab',
-            chromeMediaSourceId: streamId
+            chromeMediaSourceId: streamId,
+            maxWidth: 3840,
+            maxHeight: 2160,
+            maxFrameRate: 30
           }
         }
       });
     } else {
       screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: 'never' // 核心修复：指示浏览器截屏底层不录入系统鼠标光标，只由编辑器自定义光标渲染
-        },
+        video: { cursor: 'always' },
         audio: true
       });
     }
 
     activeStreams.push(screenStream);
+    let recordingStream = screenStream;
+    if (microphoneEnabled || screenStream.getAudioTracks().length) {
+      let micStream;
+      if (microphoneEnabled) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (err) {
+        throw new Error('无法使用麦克风，请检查连接、系统权限和浏览器权限：' + err.message);
+      }
+      activeStreams.push(micStream);
+      }
+      playbackContext = new AudioContext();
+      if (playbackContext.state !== 'running') await playbackContext.resume();
+      if (playbackContext.state !== 'running') throw new Error('音频混音未能启动，请检查浏览器音频权限');
+      const mixedAudio = playbackContext.createMediaStreamDestination();
+      if (micStream) {
+        const gain = playbackContext.createGain();
+        gain.gain.value = micVolume;
+        playbackContext.createMediaStreamSource(micStream).connect(gain).connect(mixedAudio);
+      }
+      if (screenStream.getAudioTracks().length) {
+        const screenAudio = playbackContext.createMediaStreamSource(screenStream);
+        const gain = playbackContext.createGain();
+        gain.gain.value = screenVolume;
+        screenAudio.connect(gain).connect(mixedAudio);
+        if (mode !== 'screen') screenAudio.connect(playbackContext.destination);
+      }
+      recordingStream = new MediaStream([...screenStream.getVideoTracks(), ...mixedAudio.stream.getAudioTracks()]);
+    }
     const chunks = [];
-    mediaRecorder = new MediaRecorder(screenStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+    mediaRecorder = new MediaRecorder(recordingStream, { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 12000000, audioBitsPerSecond: 192000 });
     mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
         chunks.push(e.data);
         chrome.runtime.sendMessage({ type: 'CHUNK_SAVED', count: chunks.length }).catch(() => {});
       }
     };
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      await saveBlob('latestScreenVideo', blob);
-    };
+    mediaRecorder.saved = new Promise((resolve, reject) => {
+      mediaRecorder.onstop = () => saveBlob('latestScreenVideo', new Blob(chunks, { type: 'video/webm' })).then(resolve, reject);
+      mediaRecorder.onerror = event => reject(event.error || new Error('录制失败'));
+    });
     mediaRecorder.start(500);
+    const startTime = Date.now();
+    
 
     if (cameraEnabled) {
       try {
@@ -85,27 +120,43 @@ async function startCapture({ streamId, mode, cameraEnabled }) {
         camRecorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) camChunks.push(e.data);
         };
-        camRecorder.onstop = async () => {
-          const camBlob = new Blob(camChunks, { type: 'video/webm' });
-          await saveBlob('latestCameraVideo', camBlob);
-        };
+        camRecorder.saved = new Promise((resolve, reject) => {
+          camRecorder.onstop = () => saveBlob('latestCameraVideo', new Blob(camChunks, { type: 'video/webm' })).then(resolve, reject);
+          camRecorder.onerror = event => reject(event.error || new Error('摄像头录制失败'));
+        });
         camRecorder.start(500);
       } catch (camErr) {
         console.warn('未检测到外接摄像头，可改用手机拍摄导入剪映拼合:', camErr);
       }
     }
+    return { ok: true, startTime };
   } catch (err) {
     console.error('录制启动失败:', err);
+    await stopCapture().catch(() => {});
+    return { ok: false, error: err.message };
   }
 }
 
-function stopCapture() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+async function stopCapture() {
+  const pending = [];
+  if (mediaRecorder?.saved) {
+    pending.push(mediaRecorder.saved);
+    if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   }
-  if (camRecorder && camRecorder.state !== 'inactive') {
-    camRecorder.stop();
+  if (camRecorder?.saved) {
+    pending.push(camRecorder.saved);
+    if (camRecorder.state !== 'inactive') camRecorder.stop();
   }
-  activeStreams.forEach(s => s.getTracks().forEach(t => t.stop()));
-  activeStreams = [];
+  try {
+    await Promise.all(pending);
+  } finally {
+    activeStreams.forEach(s => s.getTracks().forEach(t => t.stop()));
+    activeStreams = [];
+    if (playbackContext) {
+      await playbackContext.close();
+      playbackContext = null;
+    }
+    mediaRecorder = null;
+    camRecorder = null;
+  }
 }
